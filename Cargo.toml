@@ -1,0 +1,25 @@
+[package]
+name = "ai_assistant_core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["Orlando Jose Luque Moraira <orlando.luque@gmail.com>"]
+description = "Simple, ergonomic Rust client for local LLMs (Ollama, LM Studio, OpenAI-compatible). Chat, list models, stream responses."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/OrlandoLuque/ai_assistant_core"
+homepage = "https://ai-assistant.runawaybrains.com"
+documentation = "https://docs.rs/ai_assistant_core"
+readme = "README.md"
+keywords = ["ai", "llm", "ollama", "lm-studio", "openai"]
+categories = ["api-bindings", "text-processing"]
+
+[dependencies]
+reqwest = { version = "0.12", features = ["json", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+futures = "0.3"
+thiserror = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "test-util"] }
