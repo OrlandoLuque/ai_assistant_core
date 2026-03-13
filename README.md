@@ -35,6 +35,7 @@ async fn main() -> Result<(), ai_assistant_core::Error> {
 
 ## Features
 
+- **Auto-detection**: Scans localhost for running providers automatically
 - **Multi-provider**: Ollama, LM Studio, any OpenAI-compatible API
 - **Streaming**: Token-by-token responses via `futures::Stream`
 - **Message history**: Full conversation support with system/user/assistant roles
@@ -84,6 +85,31 @@ println!("{reply}");
 # Ok(())
 # }
 ```
+
+## Auto-Detection
+
+Don't know what's running? Let `detect()` find providers for you:
+
+```rust
+use ai_assistant_core::detect;
+
+# async fn example() -> Result<(), ai_assistant_core::Error> {
+let providers = detect(&[]).await;
+for p in &providers {
+    println!("{} at {} — {} models: {:?}", p.name, p.url, p.model_count, p.models);
+}
+
+// Chat with whatever is available
+if let Some(p) = providers.first() {
+    let reply = p.provider.chat(&p.models[0], "Hello!").await?;
+    println!("{reply}");
+}
+# Ok(())
+# }
+```
+
+Checks `OLLAMA_HOST` / `LM_STUDIO_URL` env vars, falls back to default ports.
+Pass extra URLs for custom endpoints: `detect(&["http://gpu-server:11434"])`.
 
 ## Need More?
 

@@ -61,16 +61,37 @@
 //! let custom = openai_compat("http://localhost:8080/v1");   // any OpenAI-compatible
 //! ```
 //!
+//! ## Auto-detection
+//!
+//! ```rust,no_run
+//! use ai_assistant_core::detect;
+//!
+//! # async fn example() -> Result<(), ai_assistant_core::Error> {
+//! let providers = detect(&[]).await;
+//! for p in &providers {
+//!     println!("{} at {} ({} models)", p.name, p.url, p.model_count);
+//! }
+//! // Chat with the first available provider and model
+//! if let Some(p) = providers.first() {
+//!     let reply = p.provider.chat(&p.models[0], "Hello!").await?;
+//!     println!("{reply}");
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! ## Need more?
 //!
 //! For advanced features (RAG, multi-agent, security, distributed clusters, MCP,
 //! autonomous agents, and more), check out the full
 //! [ai_assistant](https://github.com/OrlandoLuque/ai_assistant) suite.
 
+mod detect_providers;
 mod error;
 mod provider;
 mod types;
 
+pub use detect_providers::{detect, DetectedProvider};
 pub use error::Error;
 pub use provider::Provider;
 pub use types::{Message, ModelInfo, Role};
