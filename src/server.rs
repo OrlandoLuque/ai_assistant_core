@@ -211,6 +211,9 @@ struct ChatMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt; // for oneshot
 
     #[test]
     fn test_serve_config_defaults() {
@@ -219,5 +222,232 @@ mod tests {
         assert_eq!(config.host, "0.0.0.0");
         assert!(config.auth_token.is_none());
         assert!(config.cors);
+    }
+
+    /// Start a mock Ollama backend that returns fixed responses.
+    async fn start_mock_backend() -> (u16, tokio::task::JoinHandle<()>) {
+        let app = axum::Router::new()
+            .route("/api/tags", axum::routing::get(|| async {
+                axum::Json(serde_json::json!({
+                    "models": [
+                        {"name": "test-model", "size": 1000000},
+                        {"name": "test-model-2", "size": 2000000}
+                    ]
+                }))
+            }))
+            .route("/api/chat", axum::routing::post(|axum::Json(body): axum::Json<serde_json::Value>| async move {
+                let stream = body.get("stream").and_then(|s| s.as_bool()).unwrap_or(false);
+                if stream {
+                    let chunks = vec![
+                        r#"{"message":{"content":"Hello"},"done":false}"#,
+                        r#"{"message":{"content":" world"},"done":false}"#,
+                        r#"{"done":true}"#,
+                    ];
+                    let body = chunks.join("\n") + "\n";
+                    axum::response::Response::builder()
+                        .header("content-type", "application/x-ndjson")
+                        .body(Body::from(body))
+                        .unwrap()
+                } else {
+                    axum::Json(serde_json::json!({
+                        "message": {"role": "assistant", "content": "Mock response from test backend"}
+                    })).into_response()
+                }
+            }));
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        // Give it a moment to start
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        (port, handle)
+    }
+
+    #[tokio::test]
+    async fn test_health_endpoint() {
+        let provider = crate::ollama(); // won't be called for /health
+        let config = ServeConfig::default();
+        let app = build_router(provider, &config);
+
+        let resp = app
+            .oneshot(Request::get("/health").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), 200);
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], "ok");
+    }
+
+    #[tokio::test]
+    async fn test_auth_rejected_without_token() {
+        let provider = crate::ollama();
+        let mut config = ServeConfig::default();
+        config.auth_token = Some("secret123".to_string());
+        let app = build_router(provider, &config);
+
+        // No auth header → 401
+        let resp = app
+            .oneshot(Request::get("/v1/models").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[tokio::test]
+    async fn test_auth_accepted_with_correct_token() {
+        let (mock_port, _handle) = start_mock_backend().await;
+
+        let provider = crate::ollama_at(&format!("http://127.0.0.1:{}", mock_port));
+        let mut config = ServeConfig::default();
+        config.auth_token = Some("secret123".to_string());
+        let app = build_router(provider, &config);
+
+        let resp = app
+            .oneshot(
+                Request::get("/v1/models")
+                    .header("Authorization", "Bearer secret123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), 200);
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["object"], "list");
+        let data = json["data"].as_array().unwrap();
+        assert_eq!(data.len(), 2);
+        assert_eq!(data[0]["id"], "test-model");
+    }
+
+    #[tokio::test]
+    async fn test_proxy_models() {
+        let (mock_port, _handle) = start_mock_backend().await;
+
+        let provider = crate::ollama_at(&format!("http://127.0.0.1:{}", mock_port));
+        let config = ServeConfig::default(); // no auth
+        let app = build_router(provider, &config);
+
+        let resp = app
+            .oneshot(Request::get("/v1/models").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), 200);
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let data = json["data"].as_array().unwrap();
+        assert_eq!(data.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_proxy_chat_non_streaming() {
+        let (mock_port, _handle) = start_mock_backend().await;
+
+        let provider = crate::ollama_at(&format!("http://127.0.0.1:{}", mock_port));
+        let config = ServeConfig::default();
+        let app = build_router(provider, &config);
+
+        let body = serde_json::json!({
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let resp = app
+            .oneshot(
+                Request::post("/v1/chat/completions")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), 200);
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["object"], "chat.completion");
+        let content = json["choices"][0]["message"]["content"].as_str().unwrap();
+        assert_eq!(content, "Mock response from test backend");
+    }
+
+    #[tokio::test]
+    async fn test_proxy_chat_streaming() {
+        let (mock_port, _handle) = start_mock_backend().await;
+
+        let provider = crate::ollama_at(&format!("http://127.0.0.1:{}", mock_port));
+        let config = ServeConfig::default();
+        let app = build_router(provider, &config);
+
+        let body = serde_json::json!({
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "stream": true
+        });
+
+        let resp = app
+            .oneshot(
+                Request::post("/v1/chat/completions")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), 200);
+        // SSE responses have text/event-stream content type
+        let content_type = resp.headers().get("content-type").unwrap().to_str().unwrap();
+        assert!(content_type.contains("text/event-stream"), "Expected SSE, got: {}", content_type);
+
+        // Read all SSE data
+        let body = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
+        let text = String::from_utf8_lossy(&body);
+        // Should contain the streamed chunks
+        assert!(text.contains("Hello"), "SSE should contain 'Hello', got: {}", text);
+        assert!(text.contains("world"), "SSE should contain 'world', got: {}", text);
+    }
+
+    #[tokio::test]
+    async fn test_auth_wrong_token_rejected() {
+        let provider = crate::ollama();
+        let mut config = ServeConfig::default();
+        config.auth_token = Some("correct_token".to_string());
+        let app = build_router(provider, &config);
+
+        let resp = app
+            .oneshot(
+                Request::get("/v1/models")
+                    .header("Authorization", "Bearer wrong_token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[tokio::test]
+    async fn test_no_auth_when_not_configured() {
+        let (mock_port, _handle) = start_mock_backend().await;
+
+        let provider = crate::ollama_at(&format!("http://127.0.0.1:{}", mock_port));
+        let config = ServeConfig::default(); // no token = no auth
+        let app = build_router(provider, &config);
+
+        // Should work without any auth header
+        let resp = app
+            .oneshot(Request::get("/v1/models").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), 200);
     }
 }
