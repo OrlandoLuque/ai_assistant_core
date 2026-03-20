@@ -91,10 +91,25 @@ mod error;
 mod provider;
 mod types;
 
+#[cfg(feature = "nat")]
+pub mod nat;
+
+#[cfg(feature = "serve")]
+mod server;
+
+#[cfg(feature = "serve")]
+pub mod serve;
+
 pub use detect_providers::{detect, DetectedProvider};
 pub use error::Error;
 pub use provider::Provider;
 pub use types::{Message, ModelInfo, Role};
+
+#[cfg(feature = "serve")]
+pub use serve::{ProviderServiceBuilder, ServiceInfo};
+
+#[cfg(feature = "nat")]
+pub use nat::{NatConfig, NatResult};
 
 /// Create an Ollama provider pointing to `http://localhost:11434`.
 pub fn ollama() -> Provider {

@@ -1,17 +1,22 @@
 [package]
 name = "ai_assistant_core"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.75"
 authors = ["Orlando Jose Luque Moraira <orlando.luque@gmail.com>"]
-description = "Simple, ergonomic Rust client for local LLMs (Ollama, LM Studio, OpenAI-compatible). Chat, list models, stream responses."
+description = "Simple, ergonomic Rust client & server for local LLMs (Ollama, LM Studio, OpenAI-compatible). Chat, list models, stream responses, serve your model remotely."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/OrlandoLuque/ai_assistant_core"
 homepage = "https://ai-assistant.runawaybrains.com"
 documentation = "https://docs.rs/ai_assistant_core"
 readme = "README.md"
 keywords = ["ai", "llm", "ollama", "lm-studio", "openai"]
-categories = ["api-bindings", "text-processing"]
+categories = ["api-bindings", "text-processing", "network-programming"]
+
+[features]
+default = []
+serve = ["dep:axum", "dep:tower-http", "dep:tower", "tokio/signal"]
+nat = ["tokio/net"]
 
 [dependencies]
 reqwest = { version = "0.12", features = ["json", "stream"] }
@@ -21,5 +26,15 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 futures = "0.3"
 thiserror = "2"
 
+# Optional: serve feature
+axum = { version = "0.8", optional = true }
+tower-http = { version = "0.6", features = ["cors"], optional = true }
+tower = { version = "0.5", optional = true }
+
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "test-util"] }
+
+[[bin]]
+name = "ai_serve"
+path = "src/bin/ai_serve.rs"
+required-features = ["serve"]
