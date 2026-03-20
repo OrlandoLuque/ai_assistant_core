@@ -1,11 +1,12 @@
 //! # ai_assistant_core
 //!
-//! Simple, ergonomic Rust client for local LLMs.
+//! Simple, ergonomic Rust **client and server** for local LLMs.
 //!
 //! Connect to **Ollama**, **LM Studio**, or any **OpenAI-compatible** server
-//! in a few lines of code. List models, chat, and stream responses.
+//! in a few lines of code. List models, chat, stream responses, and **serve
+//! your local model** as an OpenAI-compatible API accessible remotely.
 //!
-//! ## Quick Start
+//! ## Quick Start — Client
 //!
 //! ```rust,no_run
 //! use ai_assistant_core::{ollama, Message};
@@ -71,13 +72,50 @@
 //! for p in &providers {
 //!     println!("{} at {} ({} models)", p.name, p.url, p.model_count);
 //! }
-//! // Chat with the first available provider and model
 //! if let Some(p) = providers.first() {
 //!     let reply = p.provider.chat(&p.models[0], "Hello!").await?;
 //!     println!("{reply}");
 //! }
 //! # Ok(())
 //! # }
+//! ```
+//!
+//! ## Serve Your Model (feature `serve`)
+//!
+//! Expose your local LLM as an OpenAI-compatible API:
+//!
+//! ```rust,ignore
+//! use ai_assistant_core::{ollama, serve};
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), ai_assistant_core::Error> {
+//!     let provider = ollama();
+//!     serve::quick(provider).await?; // serves on :8090
+//!     Ok(())
+//! }
+//! ```
+//!
+//! With more control:
+//!
+//! ```rust,ignore
+//! use ai_assistant_core::{ollama, ProviderServiceBuilder};
+//!
+//! # async fn example() -> Result<(), ai_assistant_core::Error> {
+//! ProviderServiceBuilder::new(ollama())
+//!     .port(9090)
+//!     .token("my_secret")
+//!     .nat()                    // STUN + UPnP for remote access
+//!     .start().await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Binary: `ai_serve`
+//!
+//! ```bash
+//! cargo install ai_assistant_core --bin ai_serve --features serve
+//! ai_serve                            # auto-detect + serve
+//! ai_serve --nat --token secret       # with remote access + auth
 //! ```
 //!
 //! ## Need more?
